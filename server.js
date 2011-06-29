@@ -966,7 +966,7 @@ module.exports = (function Server() {
 	}
 
 	function serverPostRender(pkg) {
-		assert.strictNotEqual(pkg.status,'OPEN',
+		assert.notStrictEqual(pkg.status,'OPEN',
 				'#serverPostRender received a packet with status OPEN');
 		keystore.get([pkg._id], function(rows) {
 			var row = rows[0];
