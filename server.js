@@ -1,6 +1,6 @@
-/*
+/**
 *	Launch with:
-*		cd ~/Dropbox/kelong && spark2 -v --port 8080 -n 1 -E development --watch
+*	cd ~/Dropbox/kelong && spark2 -v --port 8080 -n 1 -E development --watch
 *
 */
 
@@ -16,10 +16,6 @@ for (var k in colors) {
 	if (colors.hasOwnProperty(k)) {
 		String.prototype[k] = colors[k];
 	}
-}
-
-function elapsedSeconds(startTime) {
-	return ((new Date()-startTime)/1000).toFixed(2);
 }
 
 function compareByNumericValueOfKey(name) {
@@ -43,10 +39,6 @@ function checksumFile(path) {
 		data = fs.readFileSync(path);
 	shasum.update(data);
 	return shasum.digest('hex');
-}
-
-function randint(max) {
-	return ~~(Math.random()*(max+1));
 }
 
 function randrange(min,max) {
@@ -145,14 +137,6 @@ function enumerate(o, callback) {
 	}
 }
 
-function collect(list, callback) {
-	var newList = [];
-	for_each_in(list,function(t) {
-		newList.push(callback(t));
-	});
-	return newList;
-}
-
 function jsonclone(o) {
 	var noneCallable;
 	for (var k in o) {
@@ -245,7 +229,7 @@ Renderer.prototype.createRenderPacket = function(meta,f) {
 	h.password = meta.password;
 	h.type = meta.type;
 	h.submitted = new Date().getTime(); // Time since epoch
-	h.completed = '';
+	h.completed = null;
 	h.origin = meta.origin;
 	h.status = 'OPEN';
 	h.dependencies = meta.depp;
@@ -303,283 +287,6 @@ Renderer.prototype.parse = function(meta) {
 	return frames;
 };
 
-Renderer.PRMAN = function() {
-
-	var fs = require('fs');
-	
-	this.name = 'prman';
-	this.cmd = "prman -t:7";
-	this.extensions = ["rib","alf"];
-	this.test_cmd = "prman -help";
-	
-	function extractRibsFromAlf(filepath) {
-		var ribs = [],
-			lines = fs.readFileSync(filepath,'utf-8').split("\n");
-		for_each_in(lines,function(line) {
-			if (line.match(/Cmd/)) {
-				var match = line.match(/"%D\((.+)\)" "%D\((.+)\)"/);
-				if (match) {
-					ribs.push([match[1],match[2]]);
-				}
-			}
-		});
-		return ribs;
-	}
-	
-	function statPath(ribPath) {
-		return ribPath.replace(/\.rib/,".xml");
-	}
-	
-	this.setRenderThreads = function(n) {
-		this.cmd = "prman -t:"+n;
-	};
-	
-	this.createCommand = function(pkg) {
-		var renderFlags = pkg.args,
-			renderFile = pkg.file,
-			ignore_codes = ['R56006', // Cannot write statsfile
-							'R20040', // ???
-							'R10012', // Previously used __instanceid provided for shader
-							'R50006', // Pixar license expires in ... days.
-							'T16001'  // Texture out-of-range center
-							].join(","),
-			final_cmd = this.cmd +  ' -woff ' +  ignore_codes,
-			statsfilepath = statPath(renderFile);
-		statsfilepath = 'TMP'; // Forces renderstats to STDOUT
-		final_cmd += ' -statsfile ' + statsfilepath;
-		final_cmd += ' ' + renderFlags + ' ' + renderFile;
-		return final_cmd;
-	};
-	
-	this.parse = function(meta) {
-		var frames = [], // The return object
-			ribs = [],
-			texture_rib,
-			pkg = {};
-		
-		if (meta.file.match(/\.alf/)) {
-			var alf_ribs = extractRibsFromAlf(meta.file),
-				depp_dupe = meta.depp.slice(),
-				frame_specifics = {};
-			if (alf_ribs.length!==0) {
-				texture_rib = alf_ribs[0];
-				
-				meta.framerange = [0,0];
-				meta.batchID = codename();
-				meta.flags.cwd = texture_rib[0];
-				meta.file = texture_rib[1];
-				
-				frame_specifics = { 
-					frame_no:0,
-					args:this.stringifyFlags(meta.flags)
-				};
-				
-				pkg = this.createRenderPacket(meta,frame_specifics);
-				frames.push(pkg);
-				ribs = alf_ribs.slice(1);
-				meta.depp = depp_dupe;
-				meta.depp.push(meta.batchID);
-			}
-		} else {
-			ribs = [[null, meta.file]];
-		}
-	
-		meta.batchID = codename();
-		meta.framerange = [1,ribs.length];
-		
-		enumerate(ribs, bind(this,function(i,rib) {
-			var cwd = rib[0];
-			if (cwd) {
-				meta.flags.cwd = cwd;
-			}
-			meta.file = rib[1];
-			meta.flags.s = i+1;
-			meta.flags.e = i+1;
-			pkg = Renderer.prototype.parse.apply(this,[meta]);
-			frames = frames.concat(pkg);
-		}));
-		return frames;
-	};
-	
-	this.preRender = function(pkg, serverPostRender) {
-		var resolveAndRender = bind(this, function(paths) {
-			var missing = [];
-			for_each_in(paths.paths,function(fp,exists) {
-				!exists && fp.match(/rib|tex$/) &&
-				!paths.lines[fp].match(/Make/) &&
-					missing.push(fp);
-			});
-			if (missing.length===0) {
-				this.render(pkg, serverPostRender);
-			} else {
-				console.log("RETURNING ".red()+pkg._id);
-				console.log("Missing links on this server:");
-				console.log(JSON.stringify(missing,null,3));
-				pkg.status = 'BAN';										// < BACK TO SERVER: BAN
-				serverPostRender(pkg);
-			}
-		});
-		this.preflight(pkg, serverPostRender, function() {
-			pathfinder.resolve('rib', pkg.file, resolveAndRender);
-		});
-	};
-	
-	this.postRender = function(io, pkg, serverPostRender) {
-		var render_messages = {};
-		if (io.error) {
-			render_messages.status = 'SYSTEM ERROR';
-			render_messages.message = io.error;
-			pkg.status = 'FAILED';
-		} else if (io.stderr.match(/SEVERE|ERROR/)) {
-			render_messages.status = 'PRMAN SEVERE';
-			render_messages.messages = io.stderr;
-			pkg.status = 'FAILED';
-		} else {
-			if (io.stderr) { 
-				render_messages.status = 'COMPLETED WITH WARNINGS';
-				render_messages.messages = io.stderr;
-			} else {
-				render_messages.status = 'PERFECT';
-				render_messages.message = io.stdout;
-			}
-			pkg.status = 'DONE';
-		}
-		render_messages.fileouts = pathfinder.extractPaths(io.stdout);
-		/* If this is a preprocess rib file then no output files are
-		reported so we use a dummy image */
-		if (render_messages.fileouts===null && 
-			pkg.frame===0 &&
-			pkg.status==='DONE') {
-			render_messages.fileouts = [__dirname+'/root/images/alfred_dummy.jpg'];
-		}
-		pkg.render_messages = render_messages;
-		serverPostRender(pkg);
-	};
-
-};
-
-Renderer.MAYA = function() {
-	
-	this.name = 'maya';
-	this.cmd = "Render -mr:rt 4 -mr:v 5";
-	this.extensions = ["ma","mb"];
-	this.test_cmd = "Render";
-	
-	this.setRange = function(i) {
-		return "-s @ -e @".replace(/@/g,i);
-	};
-	
-	this.extract = function(filepath) {
-		var fs = require('fs'),
-			range = {s:null,e:null},
-			data = "",s,e;
-		if (filepath.match(/\.ma$/)) {
-			data = fs.readFileSync(filepath,'utf-8');
-			s = data.match(/setAttr ".fs" (\d+)/);
-			s = s ? parseInt(s[1],10) : 1;
-			e = data.match(/setAttr ".ef" (\d+)/);
-			e = e ? parseInt(e[1],10) : null;
-			if (e) {
-				range.s = s;
-				range.e = e;
-			}
-		}
-		return range;
-	};
-	
-	this.preRender = function(pkg, serverPostRender) {
-		var resolveAndRender = bind(this,function(paths) {
-			var missing = [];
-			for_each_in(paths.paths,function(fp,exists) {
-				if (!exists) {
-					missing.push(fp);
-				}
-			});
-			if (missing.length===0) {
-				this.render(pkg, serverPostRender);
-			} else {
-				console.log("RETURNING ".red()+pkg._id);
-				console.log("Missing links on this server:");
-				for_each_in(missing, function(fp) {
-					console.log(fp);
-				});
-				pkg.status = 'BAN';											// < BACK TO SERVER: BAN
-				serverPostRender(pkg);
-			}
-		});
-		this.preflight(pkg, serverPostRender, function() {
-			pathfinder.resolve('ma',pkg.file,resolveAndRender);
-		});
-	};
-	
-	this.postRender = function(io, pkg, serverPostRender) {
-		var render_messages = { fileouts:[] },
-			m = null;
-		if (io.error) {
-			render_messages.status = 'SYSTEM ERROR';
-			render_messages.message = io.error;
-			pkg.status = 'FAILED';
-		} else {
-			/* 	WARNING: When prman is invoked from/within MayaBatch,
-				it generates no output and this in turn will fail.
-			*/
-			if (m===null) { // Match Maya Software
-				m = io.stderr.match(/Finished Rendering (.+)\./);
-				if (m) { render_messages.fileouts.push(m[1]); }
-			}
-			if (m===null) { // Match Mental Ray
-				/* Output lines looks like:
-					'writing frame buffer mayaColor to image file /path/to/masterLayer/sphereMR.00001.exr (frame'
-					'writing frame buffer INDIRR:indirect.persp to image file /path/to/layer1/sphereMR.00001.exr (frame' 
-				*/
-				m = io.stderr.match(/writing.+file (.*) .frame/g);
-				if (m) {
-					for_each_in(m, function(line) {
-						// For each line matched, get the filepath...
-						var fp = line.match(/file (.+) \(frame/)[1];
-						render_messages.fileouts.push(fp);
-					});
-				}
-			}
-			// Finally...
-			if (render_messages.fileouts.length>0) {
-				if (io.stderr.match(/Warning/g)) {
-					render_messages.status = 'COMPLETED WITH WARNINGS';
-				} else {
-					render_messages.status = 'PERFECT';
-				}
-				pkg.status = 'DONE';
-			} else {
-				pkg.status = 'FAILED';
-				delete render_messages.fileouts;
-			}
-			render_messages.message = io.stderr;
-			pkg.render_messages = render_messages;
-			serverPostRender(pkg);
-		}
-	};
-
-};
-
-Renderer.MAYA2012 = function() {
-	Renderer.MAYA.apply(this);
-	this.name = 'maya2012';
-	this.cmd = "Render2012 -mr:rt 4 -mr:v 5";	
-	this.test_cmd = "Render2012";
-};
-
-Renderer.Factory = function(constr) {
-	var renderer;
-	
-	if (typeof Renderer[constr].prototype.render !== "function") {
-		Renderer[constr].prototype = new Renderer();
-	}
-	
-	renderer = new Renderer[constr]();	
-	renderer.testRendererFound();
-	return renderer;
-};
-
 function RenderServerUtils() {
 	
 	var sys = require('sys'),
@@ -633,14 +340,6 @@ function RenderServerUtils() {
 		}
 		return true;
 	};
-
-	this.printRenderers = bind(this, function() {
-		var self = this;
-		setTimeout(function() {
-			console.log(self.renderers);
-			console.log(self.master_status);
-		}, 1000);
-	});
 
 }
 
@@ -760,7 +459,7 @@ var Keystore = function(dbname) {
 			parms = {	key:key,
 						reduce:false,
 						include_docs:true },
-			pkg, frames = [];
+			frames = [];
 		if (updating) { parms.stale = 'ok' }
 		db.view(by_type_status, parms, function(e,res) {
 			/* 	The return object is an array of hashes.
@@ -997,7 +696,8 @@ var Ad = function(config) {
 function RenderServerAdvertisement() {
 
 	var self = this;
-	var	socket = new require('net').Socket(),
+	var	net = require('net'),
+		socket = new net.Socket(),
 		serviceType = 'renderblade',
 		ringAd, httpAd,
 		listener = mdns.createBrowser(serviceType,'tcp'),
@@ -1093,19 +793,30 @@ module.exports = (function() {
 	this.machineID = machineID;
 	this.peers = peers;
 
-	server.setStatus(0); // Disable || enable on startup
-
-	server.startAdvertising();
-
-	renderers.prman = new Renderer.Factory('PRMAN');
-	renderers.maya = new Renderer.Factory('MAYA');
-	renderers.maya2012 = new Renderer.Factory('MAYA2012');
+	(function initRenderers() {
+		var ls = require('fs').readdirSync,
+			files = ls(__dirname);
+		for_each_in(files, function(filename){
+			if (filename.match(/renderer\.js/)) {
+				var fn = filename.split('.'),
+					modName = fn[0],
+					reqpath = './'+modName+'.renderer',
+					RRR = require(reqpath);
+				for_each_in(RRR, function(k,R) {
+					var shortname = k.toLowerCase();
+					R.prototype = Renderer.prototype;
+					renderers[shortname] = new R();
+					renderers[shortname].testRendererFound();
+				});
+			}
+		});
+	})();
 
 	(function initExpress() {
 		app.use(express.bodyParser());
 		app.use(express.static(__dirname+'/root'));
 		// app.use(express.errorHandler({ dumpExceptions: true, showStack: true }));
-		// app.listen(httpPort);
+		// app.listen(httpPort); 	NOTE: This is called by spark2
 	})();
 
 	(function initTimelocks() {
@@ -1134,7 +845,10 @@ module.exports = (function() {
 			}
 		});
 	})();
-	
+
+	server.setStatus(0); // Disable || enable on startup
+	server.startAdvertising();
+
 	keystore.on('change', function(change) {
 		// TODO: Suspected has side-effects!
 		if (server.master_status.hasOwnProperty('rendering') && !isNotRendering()) {
@@ -1145,7 +859,15 @@ module.exports = (function() {
 	});
 
 	function updateRemote(pkg,callback) {
+		/*	TODO: If the origin is unreachable/down, implement a
+		 	deterministic way to 'elect' who in the ring the
+		 	update should go to instead. Hence, this function
+		 	should probably transform into a recursive one.
+		 	E.g. Try one - if fail - move to the next known server.
+		*/
+
 		// console.log("CALLER: "+arguments.callee.caller.name.red());
+
 		function updateLocally(mpkg) {
 			keystore.save([mpkg], function(res) {
 				if (res[0].hasOwnProperty('rev')) {
@@ -1246,6 +968,7 @@ module.exports = (function() {
 	function serverPostRender(pkg) {
 		keystore.get([pkg._id], function(rows) {
 			var row = rows[0];
+			// NOTE: This assertion is for when we cluster test
 			assert.strictEqual(pkg._rev, row._rev,
 					'Renderpacket revision changed while rendering.');
 			_serverPostRender(pkg);
@@ -1312,12 +1035,21 @@ module.exports = (function() {
 	}
 	
 	function getNewRenders() {
+		/* 	Methods are called in this order:
+				1) canRender()
+				2) grabOne()
+				3) makeReservation() || resolveDeppsAndCapture() -> makeReservation
+				4) render()
+			If the "race condition" mechanism has no side effects in large clusters,
+			we've implemented a check to make sure that the rev number between steps
+			(3) and (4) is === 1;
+		 */
 
 		function render(pkg) {
 			// Be super-paranoid and check this at every step
 			if (server.master_status.ok && isNotRendering()) {
 				pkg.status='RENDERING';
-				pkg.handler = 'http://' + hostname + ':' + httpPort;
+				pkg.handler = server.machineID;
 				updateRemote(pkg, function(res) {
 					if (res.hasOwnProperty('_id') &&
 						keystore.revDiff(pkg,res)===1) {
@@ -1416,12 +1148,13 @@ module.exports = (function() {
 	});
 
 	app.get('/peers', function monitorPeers(req,res) {
-		var heartbeat = 10, last_result_crc = '', curr_result_crc = '';
+		var last_result_crc = '', curr_result_crc = '';
 		function writePeers() {
 			var p = {};
 			for_each_in(peers, function(serviceName,info) {
 				p[serviceName] = {status:info.status};
 			});
+
 			curr_result_crc = checksum(p,'md5');
 			if (curr_result_crc!==last_result_crc) {
 				last_result_crc = curr_result_crc;
@@ -1429,7 +1162,12 @@ module.exports = (function() {
 			}
 		}
 		writePeers();
-		setInterval(function() { writePeers(); },heartbeat*1000);
+		setInterval(function keepAlive() {
+			res.write('\n');
+		},60*1000);
+		setInterval(function() {
+			writePeers();
+		},10*1000);
 	});
 
 	app.get('/status/:code', function setStatus(req,res) {
@@ -1593,23 +1331,6 @@ module.exports = (function() {
 				});
 			});
 		}
-	});
-
-	app.get('/randomupdate/:batchID', function randomUpdateBatch(req,res) {
-		var batchID = req.params.batchID,
-			statuses = ['DONE','RENDERING','FAILED'];
-		keystore.getBatch(batchID, function(frames) {
-			for_each_in(statuses, function(stat) {
-				var batch = sample(randrange(10,frames.length/2), frames);
-				for_each_in(batch, function(doc) {
-					doc.status = stat;
-				});
-				keystore.save(batch, function(new_frames) {
-					// Ignore
-				});
-			});
-			res.send('OK');
-		});
 	});
 
 	app.get('/update/:batchID/:status', function updateBatch(req,res) {
