@@ -785,8 +785,6 @@ module.exports = (function Server() {
 		peers = {},
 		server = this;
 		
-	var RVGO = true; // TODO: Check for rvio
-
 	this.httpPort = httpPort;
 	this.master_status = {};
 	this.renderers = renderers;
@@ -1013,15 +1011,20 @@ module.exports = (function Server() {
 				updateRemote(pkg, function(updated_pkg) {
 					// Now that we have the latest _rev
 					server.master_status.hasOwnProperty('rendering') && server.setStatus(0);
-					if (RVGO && updated_pkg.hasOwnProperty('_id')) {
+					if (updated_pkg.hasOwnProperty('_id')) {
 						var fp = updated_pkg.render_messages.fileouts[0],
 							thumb = fp.replace(/\.....?$/,'.thumb.jpg'),
 							cmd = 'rvio '+fp+' -outres 250 140 -o '+thumb;
-						popen(cmd, function() {
-							keystore.attach(updated_pkg, thumb, function() {
-								console.log('DONE ==> '.green() +
-									JSON.stringify(pkg.render_messages.fileouts,null,3));
-							});
+						popen(cmd, function(e,stdout,stderr) {
+							if (!stderr) {
+								keystore.attach(updated_pkg, thumb, function() {
+									console.log('DONE ==> '.green() +
+										JSON.stringify(pkg.render_messages.fileouts,null,3));
+								});
+							} else {
+								console.log("Cannot render thumbnail!".red())
+								console.log(stderr);
+							}
 						});
 					}
 				});
