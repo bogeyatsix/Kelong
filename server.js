@@ -755,7 +755,7 @@ function RenderServerAdvertisement() {
 
 }
 
-module.exports = (function() {
+module.exports = (function Server() {
 
 	RenderServerUtils.apply(this);
 	RenderServerAdvertisement.apply(this);
@@ -966,6 +966,8 @@ module.exports = (function() {
 	}
 
 	function serverPostRender(pkg) {
+		assert.strictNotEqual(pkg.status,'OPEN',
+				'#serverPostRender received a packet with status OPEN');
 		keystore.get([pkg._id], function(rows) {
 			var row = rows[0];
 			// NOTE: This assertion is for when we cluster test
