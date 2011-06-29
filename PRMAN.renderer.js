@@ -122,31 +122,45 @@ PRMAN = function() {
 	this.postRender = function(io, pkg, serverPostRender) {
 		var render_messages = {};
 		if (io.error) {
-			render_messages.status = 'SYSTEM ERROR';
+			render_messages.status = 'ERROR SYSTEM';
 			render_messages.message = io.error;
 			pkg.status = 'FAILED';
+		} else if (io.stderr.match(/R50005/)) {
+			render_messages.status = 'ERROR LICENSE';
+			render_messages.messages = io.stderr;
+			pkg.status = 'REOPEN';
 		} else if (io.stderr.match(/SEVERE|ERROR/)) {
-			render_messages.status = 'PRMAN SEVERE';
+			render_messages.status = 'ERROR SEVERE';
 			render_messages.messages = io.stderr;
 			pkg.status = 'FAILED';
 		} else {
-			if (io.stderr) { 
-				render_messages.status = 'COMPLETED WITH WARNINGS';
+			render_messages.fileouts = pathfinder.extractPaths(io.stdout);
+			if (render_messages.fileouts!==null) {
+				if (io.stderr) { // Got fileouts but error raised
+					render_messages.status = 'COMPLETED WITH WARNINGS';
+					render_messages.messages = io.stderr;
+				} else { // Got fileouts with no errors
+					render_messages.status = 'PERFECT';
+					render_messages.message = io.stdout;
+				}
+				pkg.status = 'DONE';
+			} else if (io.stderr) { // No fileouts and unknown error
+				render_messages.status = 'ERROR UNRECOGNIZED';
 				render_messages.messages = io.stderr;
-			} else {
-				render_messages.status = 'PERFECT';
-				render_messages.message = io.stdout;
+				pkg.status = 'FAILED';
+			} else { // No error, but no fileouts either
+				pkg.status = 'DONE';
 			}
-			pkg.status = 'DONE';
 		}
-		render_messages.fileouts = pathfinder.extractPaths(io.stdout);
-		/* If this is a preprocess rib file then no output files are
-		reported so we use a dummy image */
-		if (render_messages.fileouts===null && 
+
+		if (render_messages.fileouts===null &&
 			pkg.frame===0 &&
 			pkg.status==='DONE') {
+			/* If this is a preprocess rib file then no output files are
+			reported so we use a dummy image */
 			render_messages.fileouts = [__dirname+'/root/images/alfred_dummy.jpg'];
 		}
+
 		pkg.render_messages = render_messages;
 		serverPostRender(pkg);
 	};
