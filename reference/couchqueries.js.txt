@@ -1,0 +1,96 @@
+> cradle = require('cradle');
+> db = new(cradle.Connection)().database('maggiequeue');
+
+> db.view('docs/by_type_status',{reduce:true,group:true}, function(e,res) { console.log(res); });
+> [ { key: [ 'ALL', 'DONE' ], value: 27 },
+  { key: [ 'ALL', 'OPEN' ], value: 99 },
+  { key: [ 'ALL', 'ALL' ], value: 126 },
+  { key: [ 'extravagate_hyphantria', 'DONE' ], value: 1 },
+  { key: [ 'extravagate_hyphantria', 'OPEN' ], value: 99 },
+  { key: [ 'extravagate_hyphantria', 'ALL' ], value: 100 },
+  { key: [ 'piggy_reviving', 'DONE' ], value: 24 },
+  { key: [ 'piggy_reviving', 'ALL' ], value: 24 },
+  { key: [ 'prman', 'DONE' ], value: 27 },
+  { key: [ 'prman', 'OPEN' ], value: 99 },
+  { key: [ 'prman', 'ALL' ], value: 126 },
+  { key: [ 'project_bruchid', 'DONE' ], value: 1 },
+  { key: [ 'project_bruchid', 'ALL' ], value: 1 },
+  { key: [ 'undazzle_passibility', 'DONE' ], value: 1 },
+  { key: [ 'undazzle_passibility', 'ALL' ], value: 1 } ]
+
+> db.view('docs/by_type_status',{startkey:['prman','A'],endkey:['prman','Z'],group:true}, function(e,res) { console.log(res); });
+> [ { key: [ 'prman', 'ALL' ], value: 126 }, { key: [ 'prman', 'DONE' ], value: 27 }, { key: [ 'prman', 'FAILED' ], value: 1 }, { key: [ 'prman', 'OPEN' ], value: 97 }, { key: [ 'prman', 'RENDERING' ], value: 1 } ]
+
+> db.view('docs/by_type_status',{key:['ALL','DONE'],group:true}, function(e,res) { console.log(res); });
+> [ { key: [ 'ALL', 'DONE' ], value: 27 } ]
+
+> db.view('docs/by_type_status',{key:['extravagate_hyphantria','OPEN'],group:true}, function(e,res) { console.log(res); });
+> [ { key: [ 'extravagate_hyphantria', 'OPEN' ], value: 99 } ]
+
+> db.view('docs/by_type_status',{key:['extravagate_hyphantria','OPEN']}, function(e,res) { console.log(res); });
+> [ { key: null, value: 99 } ]
+
+> db.view('docs/by_type_status',{key:['undazzle_passibility','OPEN'],group:true}, function(e,res) { console.log(res); });
+> []
+
+> db.view('docs/by_type_status',{key:['extravagate_hyphantria','ALL'],reduce:false,limit:1}, function(e,res) { console.log(res); });
+> [ { id: '03C62C05-AC17-4303-A2E3-362ABB5C2AB2',
+    key: [ 'extravagate_hyphantria', 'ALL' ],
+    value: 
+     { _id: '03C62C05-AC17-4303-A2E3-362ABB5C2AB2',
+       _rev: '19-139ca610584dc9ed8f205657f16adb3a',
+       args: ' -cwd /Users/adrianloh/Dropbox/Maya_Default/projects/CoShaders/',
+       frame: 6,
+       framerange: [Object],
+       batchID: 'extravagate_hyphantria',
+       file: '/Users/adrianloh/Dropbox/Maya_Default/projects/CoShaders/renderman/occlusion_end/rib/0006/0006.rib',
+       type: 'prman',
+       submitted: 'Sun Jun 12 2011 16:08:51 GMT+0800 (MYT)',
+       completed: '',
+       return_address: 'http://hiroshima.local:5984/maggiequeue',
+       status: 'OPEN',
+       dependencies: [Object],
+       render_messages: [] } } ]
+
+> db.list('docs/collate/by_type_status',{group:true,types:['killable_inchoation','zing_pyruvate'].toString()}, function(e,res) { console.log(res); });
+> { killable_inchoation: { TOTAL: 1, DONE: 1 }, zing_pyruvate: { TOTAL: 24, OPEN: 24 } }
+
+// If you're querying for only one type, then below is more efficient:
+
+> db.list('docs/collate/by_type_status',{startkey:['zing_pyruvate'],endkey:['zing_pyruvate',{}],group:true}, function(e,res) { console.log(res); });
+> { zing_pyruvate: { TOTAL: 24, OPEN: 24 } }
+
+> db.list('docs/renderable/by_type_status',{reduce:false,key:['ALL','OPEN'],types:['maya'].toString()}, function(e,res) { console.log(res); });
+> [ { _id: 'B4CE388D-D580-44B6-971D-ED78E3623C50',
+    _rev: '6-c1d05ad0fe0ed14cf35770dc3afc1d13',
+    args: '-cwd /Users/adrianloh/Dropbox/Maya_Default/projects/CoShaders/',
+    frame: 0,
+    framerange: [ 0, 0 ],
+    batchID: 'killable_inchoation',
+    file: '/Users/adrianloh/Dropbox/Maya_Default/projects/CoShaders/renderman/Buzz_v1_animated/rib/job/job_pose.rib',
+    type: 'maya',
+    submitted: 1308101680842,
+    completed: '',
+    return_address: 'http://hiroshima.local:5984/maggiequeue',
+    status: 'OPEN',
+    dependencies: [],
+    render_messages: { status: 'PERFECT', fileouts: null } } ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,33 @@
+Projection "perspective" "fov" [45]
+Format 512 512 1.0
+Translate 0 0 1.5
+Rotate 75 1 0 0
+
+Display "hello_world.tif" "tiff" "rgb"
+
+WorldBegin
+	
+	
+	LightSource "spotlight" "key light" "float intensity" [300] 
+	    "point from" [3 3 -15]"point to" [0 0 0]
+	LightSource "spotlight" "fill light" "float intensity" [100] 
+	    "point from" [-6 -6 15]"point to" [0 0 0] "coneangle" [100]
+	LightSource "spotlight" "kicker" "float intensity" [200] 
+	    "point from" [6 6 -25]"point to" [0 0 0] "coneangle" [5]
+
+	#LightSource "ambientlight" 3 "intensity" [.2]
+
+	Surface "plastic"
+
+	SolidBegin "difference"
+		SolidBegin "primitive"
+			Color 1 0 1
+			Sphere 0.45 -0.45 0.45 360
+		SolidEnd
+		SolidBegin "primitive"
+			Color 0 1 1
+			Torus 0.40 0.25 0 360 360
+		SolidEnd
+	SolidEnd
+
+WorldEnd
