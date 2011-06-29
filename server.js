@@ -1,10 +1,16 @@
-assert = require('assert');
-popen = require('child_process').exec;
-pathfinder = require('./pathfinder');
-codename = require('./codename').codename;
-colors = require('./colored');
-mdnsModules = {'darwin':'mdns_darwin', 'linux':'mdns_linux'};
-mdns = require(mdnsModules[process.platform]);
+/*
+*	Launch with:
+*		cd ~/Dropbox/kelong && spark2 -v --port 8080 -n 1 -E development --watch
+*
+*/
+
+var assert = require('assert'),
+	popen = require('child_process').exec,
+	pathfinder = require('./pathfinder'),
+	codename = require('./codename').codename,
+	mdnsModules = {'darwin':'mdns_darwin', 'linux':'mdns_linux'},
+	mdns = require(mdnsModules[process.platform]),
+	colors = require('./colored');
 
 for (var k in colors) {
 	if (colors.hasOwnProperty(k)) {
@@ -24,8 +30,9 @@ function compareByNumericValueOfKey(name) {
 
 function checksum(o,algo) {
 	var crypto = require('crypto'),
-		shasum = crypto.createHash(algo);
-	shasum.update(JSON.stringify(o));
+		shasum = crypto.createHash(algo),
+		oo = typeof o==='string' ? o : JSON.stringify(o);
+	shasum.update(oo);
 	return shasum.digest('hex');
 }
 
@@ -239,7 +246,7 @@ Renderer.prototype.createRenderPacket = function(meta,f) {
 	h.type = meta.type;
 	h.submitted = new Date().getTime(); // Time since epoch
 	h.completed = '';
-	h.return_address = meta.return_address;
+	h.origin = meta.origin;
 	h.status = 'OPEN';
 	h.dependencies = meta.depp;
 	h.handler = '';
@@ -987,13 +994,74 @@ var Ad = function(config) {
 	this.stop = function() { ad.stop(); };
 };
 
-var RenderServer = (function() {
+function RenderServerAdvertisement() {
+
+	var self = this;
+	var	socket = new require('net').Socket(),
+		serviceType = 'renderblade',
+		ringAd, httpAd,
+		listener = mdns.createBrowser(serviceType,'tcp'),
+		getMAC = {
+			'darwin':{cmd:'ifconfig en0',match:/\w\w:\w\w:\w\w:\w\w:\w\w:\w\w/},
+			'linux':{cmd:'ifconfig eth0',match:/\w\w:\w\w:\w\w:\w\w:\w\w:\w\w/},
+			'windows':'ipconfig /all'
+		}[process.platform];
+
+	this.startAdvertising = function() {
+		popen(getMAC.cmd, function(e, stdout, stderr) {
+			self.machineID = stdout.match(getMAC.match)[0];
+			socket.setTimeout(100, function(e) {
+				var config = {
+					type: serviceType,
+					name: self.machineID,
+					port: httpPort,
+					txtRecord:{ip:socket.address().address}
+				};
+				socket.destroy();
+
+				httpAd = new Ad({type:'http',port: httpPort});
+				httpAd.start();
+
+				ringAd = new Ad(config);
+				ringAd.start();
+			
+			});
+			socket.connect(123,'4.3.2.1');
+			listener.on('serviceUp', function(info, flags) {
+				/* The info object looks like:
+					{ interfaceIndex: 6,
+					  serviceName: '00:1f:5b:34:ac:e8',
+					  regtype: '_renderblade._tcp.',
+					  replyDomain: 'local.',
+					  fullname: '00:1f:5b:34:ac:e8._renderblade._tcp.local.',
+					  host: 'hiroshima.local.',
+					  port: 8080,
+					  txtRecord: { '': '' } }
+				*/
+				info.status = 'unknown';
+				info.last = new Date().getTime();
+				self.peers[info.serviceName] = info;
+				console.log('++ '.green()+info.serviceName)
+			});
+			listener.on('serviceDown', function(info, flags) {
+				if (self.peers.hasOwnProperty(info.serviceName)) {
+					console.log('-- '.red()+info.serviceName);
+					delete self.peers[info.serviceName];
+				}
+			});
+			listener.start();
+		});
+	};
+
+}
+
+module.exports = (function() {
 
 	RenderServerUtils.apply(this);
-	
+	RenderServerAdvertisement.apply(this);
+
 	var sys = require('sys'),
 		os = require('os'),
-		socket = new require('net').Socket(),
 
 		hostname = os.hostname(),
 		httpPort = 8080, //randrange(20000,30000),
@@ -1003,7 +1071,9 @@ var RenderServer = (function() {
 		
 		renderers = {},
 		blacklist = {},
-		
+
+		machineID = null,
+
 		dbname = 'maggiequeue',
 		dbport = 5984,
 		keystore = new Keystore(dbname),
@@ -1012,24 +1082,30 @@ var RenderServer = (function() {
 
 		st = new Spacetree(app, keystore),
 
-		self = this;
+		peers = {},
+		server = this;
 		
 	var RVGO = true; // TODO: Check for rvio
-	
+
+	this.httpPort = httpPort;
 	this.master_status = {};
 	this.renderers = renderers;
+	this.machineID = machineID;
+	this.peers = peers;
 
-	self.setStatus(0); // Disable || enable on startup
-	
+	server.setStatus(0); // Disable || enable on startup
+
+	server.startAdvertising();
+
 	renderers.prman = new Renderer.Factory('PRMAN');
 	renderers.maya = new Renderer.Factory('MAYA');
 	renderers.maya2012 = new Renderer.Factory('MAYA2012');
-	
+
 	(function initExpress() {
 		app.use(express.bodyParser());
 		app.use(express.static(__dirname+'/root'));
 		// app.use(express.errorHandler({ dumpExceptions: true, showStack: true }));
-		app.listen(httpPort);
+		// app.listen(httpPort);
 	})();
 
 	(function initTimelocks() {
@@ -1041,76 +1117,28 @@ var RenderServer = (function() {
 				var msg = "TIMELOCK ACTIVE: Suspended! Will resume @ "+timeToRelease;
 				console.log(msg.red());
 			}
-			if (self.master_status.hasOwnProperty('rendering')) {
+			if (server.master_status.hasOwnProperty('rendering')) {
 				console.log("TIMELOCK ACTIVE: Aborting render!".red());
 				abortCurrentRender(1);
 				in_timelock = true;
 			} else {
-				self.setStatus(1);
+				server.setStatus(1);
 				in_timelock = true;
 			}
 		});
 		timelocks.onInactive(function() {
 			if (in_timelock) {
 				console.log("EXITING TIMELOCK: Server resumed...".green());
-				self.setStatus(0);
+				server.setStatus(0);
 				in_timelock = false;
 			}
 		});
 	})();
 	
-	var peers = {},
-		serviceType = 'renderblade',
-		advertisement,
-		listener = mdns.createBrowser(serviceType,'tcp'),
-		machineID = null,
-		getMAC = {
-			'darwin':{cmd:'ifconfig en0',match:/\w\w:\w\w:\w\w:\w\w:\w\w:\w\w/},
-			'linux':{cmd:'ifconfig eth0',match:/\w\w:\w\w:\w\w:\w\w:\w\w:\w\w/},
-			'windows':'ipconfig /all'
-		}[process.platform];
-	popen(getMAC.cmd, function(e, stdout, stderr) {
-		machineID = stdout.match(getMAC.match)[0];
-		socket.connect(80,'www.facebook.com',function() {
-			var config = {
-				type: serviceType,
-				name: machineID,
-				port: httpPort,
-				txtRecord:{ip:socket.address().address}
-			};
-			advertisement = new Ad(config);
-			advertisement.start();
-		});
-
-		listener.on('serviceUp', function(info, flags) {
-			/* The info object looks like:
-				{ interfaceIndex: 6,
-				  serviceName: '00:1f:5b:34:ac:e8',
-				  regtype: '_renderblade._tcp.',
-				  replyDomain: 'local.',
-				  fullname: '00:1f:5b:34:ac:e8._renderblade._tcp.local.',
-				  host: 'hiroshima.local.',
-				  port: 8080,
-				  txtRecord: { '': '' } }
-			*/
-			console.log(info);
-			peers[info.serviceName] = info;
-		});
-
-		listener.on('serviceDown', function(info, flags) {
-			if (peers.hasOwnProperty(info.name)) {
-				delete peers[info.name];
-			}
-		});
-
-		listener.start();
-
-	});
-
 	keystore.on('change', function(change) {
 		// TODO: Suspected has side-effects!
-		if (self.master_status.hasOwnProperty('rendering') && !isNotRendering()) {
-			if (change.id===self.master_status.rendering._id) {
+		if (server.master_status.hasOwnProperty('rendering') && !isNotRendering()) {
+			if (change.id===server.master_status.rendering._id) {
 				abortCurrentRender(1);
 			}
 		}
@@ -1132,7 +1160,19 @@ var RenderServer = (function() {
 		var buffer=[], chunky={},
 			http = require('http'),
 			url = require('url'),
-			origin = url.parse(pkg.return_address),
+			originIP, return_address;
+
+		if (peers.hasOwnProperty(pkg.origin)) {
+			originIP = peers[pkg.origin].txtRecord.ip;
+			return_address = 'http://' + originIP + ':' + dbport + '/' + dbname;
+		}
+	
+		if (!(return_address)) {
+			callback({error:true});
+			return;
+		}
+
+		var origin = url.parse(return_address),
 			options = {
 				host: origin.hostname,
 				port: origin.port || 80,
@@ -1175,8 +1215,8 @@ var RenderServer = (function() {
 			Kill signal terminates 'Render' but not MayaBatch.
 		*/
 		var pkg, pid, exec;
-		if (self.master_status.hasOwnProperty('rendering')) {
-			pkg = self.master_status.rendering;
+		if (server.master_status.hasOwnProperty('rendering')) {
+			pkg = server.master_status.rendering;
 			exec = [0,0].hasOwnProperty(killcode) &&
 			{
 				0:function killActive() {
@@ -1188,7 +1228,7 @@ var RenderServer = (function() {
 					pkg.status = 'OPEN';
 					updateRemote(pkg,function() {
 						that[0]();
-						self.setStatus(1);
+						server.setStatus(1);
 					});
 				}
 			}[killcode]();
@@ -1247,7 +1287,7 @@ var RenderServer = (function() {
 				// Before attaching the thumbnail, save the document...
 				updateRemote(pkg, function(updated_pkg) {
 					// Now that we have the latest _rev
-					self.master_status.hasOwnProperty('rendering') && self.setStatus(0);
+					server.master_status.hasOwnProperty('rendering') && server.setStatus(0);
 					if (RVGO && updated_pkg.hasOwnProperty('_id')) {
 						var fp = updated_pkg.render_messages.fileouts[0],
 							thumb = fp.replace(/\.....?$/,'.thumb.jpg'),
@@ -1267,7 +1307,7 @@ var RenderServer = (function() {
 		updateRemote(pkg,function() {
 			status = pkg.status==='DONE' ? pkg.status.green() : pkg.status.red();
 			console.log(status+': no output files. '+pkg._id);
-			self.master_status.hasOwnProperty('rendering') && self.setStatus(0);
+			server.master_status.hasOwnProperty('rendering') && server.setStatus(0);
 		});
 	}
 	
@@ -1275,13 +1315,13 @@ var RenderServer = (function() {
 
 		function render(pkg) {
 			// Be super-paranoid and check this at every step
-			if (self.master_status.ok && isNotRendering()) {
+			if (server.master_status.ok && isNotRendering()) {
 				pkg.status='RENDERING';
 				pkg.handler = 'http://' + hostname + ':' + httpPort;
 				updateRemote(pkg, function(res) {
 					if (res.hasOwnProperty('_id') &&
 						keystore.revDiff(pkg,res)===1) {
-						self.setStatus({ ok:false, rendering:res });
+						server.setStatus({ ok:false, rendering:res });
 						var renderPkg = jsonclone(res);
 						//console.log("RENDER ====> "+renderPkg._rev);
 						renderers[renderPkg.type].preRender(renderPkg,serverPostRender);
@@ -1292,7 +1332,7 @@ var RenderServer = (function() {
 		
 		function makeReservation(pkg) {
 			 // Be super-paranoid and check this at every step
-			if (self.master_status.ok && isNotRendering()) {
+			if (server.master_status.ok && isNotRendering()) {
 				pkg.render_messages = {}; // Clean out messages from previous runs
 				updateRemote(pkg, function(res) {
 					if (res.hasOwnProperty('_id') &&
@@ -1340,8 +1380,8 @@ var RenderServer = (function() {
 		}
 
 		(function getNewRenderMain() {
-			if (self.master_status.ok && isNotRendering()) {
-				var avail = self.available_renderers(); // an [] of ready renderer names
+			if (server.master_status.ok && isNotRendering()) {
+				var avail = server.available_renderers(); // an [] of ready renderer names
 				keystore.getOpen(avail, grabOne);
 			}
 		})();
@@ -1356,24 +1396,47 @@ var RenderServer = (function() {
 	}
 
 	function writeStatus(res) {
-		res.write(jsonify(self.getStatus())+'\r\n');
+		res.writeHead(200, {'Content-Type':'application/json'});
+		res.write(jsonify(server.getStatus())+'\r\n');
 		res.end();
 	}
 
 	app.get('/', function index(req,res) {
-		res.write(jsonify({ok:"Welcome to MQ."})+'\r\n');
+		res.writeHead(200, {'Content-Type':'application/json'});
+		res.write(jsonify({
+			ok:true,
+			msg:'Welcome to MQ',
+			machineID:server.machineID
+		}));
 		res.end();
 	});
 	
 	app.get('/status', function getStatus(req,res) {
 		writeStatus(res);
 	});
-	
+
+	app.get('/peers', function monitorPeers(req,res) {
+		var heartbeat = 10, last_result_crc = '', curr_result_crc = '';
+		function writePeers() {
+			var p = {};
+			for_each_in(peers, function(serviceName,info) {
+				p[serviceName] = {status:info.status};
+			});
+			curr_result_crc = checksum(p,'md5');
+			if (curr_result_crc!==last_result_crc) {
+				last_result_crc = curr_result_crc;
+				res.write(jsonify(p)+"\r\n");
+			}
+		}
+		writePeers();
+		setInterval(function() { writePeers(); },heartbeat*1000);
+	});
+
 	app.get('/status/:code', function setStatus(req,res) {
 		var code = parseInt(req.params.code,10),
 			msg;
-		if (typeof self.master_status.rendering==='undefined') {
-			self.setStatus(code);
+		if (typeof server.master_status.rendering==='undefined') {
+			server.setStatus(code);
 			writeStatus(res);
 		} else {
 			msg = {error:'Cannot override status while rendering. Use kill instead.'};
@@ -1404,8 +1467,8 @@ var RenderServer = (function() {
 	
 	app.get('/kill/:code', function killall(req,res) { // ----- DESTRUCTIVE
 		var pkg, exec, killcode = parseInt(req.params.code,10);
-		if (self.master_status.hasOwnProperty('rendering')) {
-			pkg = self.master_status.rendering;
+		if (server.master_status.hasOwnProperty('rendering')) {
+			pkg = server.master_status.rendering;
 			exec = [0,1].indexOf(killcode)!==-1 && abortCurrentRender(killcode);
 			exec===false && res.send('Only status 1 or 0 allowed.');
 			res.send(jsonify({ok:'Killed current render.'}))
@@ -1439,10 +1502,10 @@ var RenderServer = (function() {
 				throw {error:"Renderer "+renderer+" not implemented."};
 			}
 
-			self.checkFile(renderer,params);
+			server.checkFile(renderer,params);
 
 			meta.type = renderer;
-			meta.return_address = 'http://' + request_root + ':' + dbport + '/' + dbname;
+			meta.origin = server.machineID;
 
 			meta.project = params.hasOwnProperty('project') ? params.project : 'default';
 			delete params.project;
@@ -1564,5 +1627,7 @@ var RenderServer = (function() {
 		blacklist = {};
 		res.send(jsonify({ok:true,msg:'Blacklist reset.'}));
 	}); // flush blacklist
+
+	return app;
 
 })();

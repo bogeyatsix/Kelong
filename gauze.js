@@ -1,3 +1,6 @@
+mdnsModules = {'darwin':'mdns_darwin', 'linux':'mdns_linux'};
+mdns = require(mdnsModules[process.platform]);
+
 var Advertisement = function(config) {
 
 	if (typeof(config.txt_record)!=='undefined') {
@@ -9,8 +12,7 @@ var Advertisement = function(config) {
 	}
 	
 	var sys = require('sys'),
-		mdns = require('mdns'),
-		ad = mdns.createAdvertisement(config.type, config.port, undefined, 
+		ad = mdns.createAdvertisement(config.type, config.port, undefined,
 			undefined, undefined, config.name, undefined, config.address, config.txt_record,
 			function(err, info, flags) {
 				sys.puts("==== up");
@@ -30,7 +32,6 @@ var CouchReplicator = function(config) {
 	var self = config;
 
 	var sys = require('sys'),
-		mdns = require('mdns'),
 		app = require('express').createServer(),
 		agent = require('superagent'),
 		urlopen = require('open-uri'),
@@ -119,7 +120,7 @@ var CouchReplicator = function(config) {
 	}
 
 	listener.on('serviceUp', function(info, flags) {
-		var	hosttarget = info.hosttarget.slice(0,-1),
+		var	hosttarget = info.host.slice(0,-1),
 			remotehost = "http://"+hosttarget,
 			rec = info.txt_record,
 			remote_db_url = remotehost+":"+rec.couchport+"/"+self.db,
