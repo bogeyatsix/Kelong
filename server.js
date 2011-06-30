@@ -8,9 +8,9 @@ var assert = require('assert'),
 	popen = require('child_process').exec,
 	pathfinder = require('./pathfinder'),
 	codename = require('./codename').codename,
-	mdnsModules = {'darwin':'mdns_darwin', 'linux':'mdns_linux'},
-	mdns = require(mdnsModules[process.platform]),
-	colors = require('./colored');
+	mdns = require('node-bj'),
+	colors = require('./colored'),
+	path = require('path');
 
 for (var k in colors) {
 	if (colors.hasOwnProperty(k)) {
@@ -965,7 +965,9 @@ module.exports = (function Server() {
 
 	function serverPostRender(pkg) {
 		assert.notStrictEqual(pkg.status,'OPEN',
-				'#serverPostRender received a packet with status OPEN');
+				"#serverPostRender received a packet from " +
+				pkg.type +
+				" with status still OPEN");
 		keystore.get([pkg._id], function(rows) {
 			var row = rows[0];
 			// NOTE: This assertion is for when we cluster test
@@ -1016,13 +1018,13 @@ module.exports = (function Server() {
 							thumb = fp.replace(/\.....?$/,'.thumb.jpg'),
 							cmd = 'rvio '+fp+' -outres 250 140 -o '+thumb;
 						popen(cmd, function(e,stdout,stderr) {
-							if (!stderr) {
+							if (!stderr.match(/not found/) && path.existsSync(thumb)) {
 								keystore.attach(updated_pkg, thumb, function() {
 									console.log('DONE ==> '.green() +
 										JSON.stringify(pkg.render_messages.fileouts,null,3));
 								});
 							} else {
-								console.log("Cannot render thumbnail!".red())
+								console.log("Cannot render thumbnail!".red());
 								console.log(stderr);
 							}
 						});
@@ -1089,7 +1091,6 @@ module.exports = (function Server() {
 		}
 
 		function canRender(pkg) {
-			var path = require('path');
 			return	!timelocks.active() && 							// This is a precautionary double-check
 					renderers.hasOwnProperty(pkg.type) &&			// Is the renderer implemented?
 					renderers[pkg.type].ready &&					// Is it ready on this machine?
