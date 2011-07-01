@@ -1,9 +1,9 @@
 Projection "perspective" "fov" [45]
-Format 512 512 1.0
+Format 50 50 1.0
 Translate 0 0 1.5
 Rotate 75 1 0 0
 
-Display "hello_world.tif" "tiff" "rgb"
+Display "./reference/ribtest.tif" "tiff" "rgb"
 
 WorldBegin
 	

@@ -1,5 +1,4 @@
-mdnsModules = {'darwin':'mdns_darwin', 'linux':'mdns_linux'};
-mdns = require(mdnsModules[process.platform]);
+mdns = require('node-bj');
 
 var Advertisement = function(config) {
 

@@ -1001,39 +1001,39 @@ module.exports = (function Server() {
 				// pass
 		}
 		
-		if (pkg.status==='DONE' &&
-			pkg.render_messages.hasOwnProperty('fileouts') &&
+		if (pkg.render_messages.hasOwnProperty('fileouts') &&
 			pkg.render_messages.fileouts.length>0) {
 			for_each_in(pkg.render_messages.fileouts,function(fp) {
 				if (!path.existsSync(fp)) { pkg.status = 'FAILED'; }
 			});
-			if (pkg.status==='DONE') {
-				pkg.completed = new Date().getTime();
-				// Before attaching the thumbnail, save the document...
-				updateRemote(pkg, function(updated_pkg) {
-					// Now that we have the latest _rev
-					server.master_status.hasOwnProperty('rendering') && server.setStatus(0);
-					if (updated_pkg.hasOwnProperty('_id')) {
-						var fp = updated_pkg.render_messages.fileouts[0],
-							thumb = fp.replace(/\.....?$/,'.thumb.jpg'),
-							cmd = 'rvio '+fp+' -outres 250 140 -o '+thumb;
-						popen(cmd, function(e,stdout,stderr) {
-							if (!stderr.match(/not found/) && path.existsSync(thumb)) {
-								keystore.attach(updated_pkg, thumb, function() {
-									console.log('DONE ==> '.green() +
-										JSON.stringify(pkg.render_messages.fileouts,null,3));
-								});
-							} else {
-								console.log("Cannot render thumbnail!".red());
-								console.log(stderr);
-							}
-						});
-					}
-				});
-				return null;
-			}
 		}
 		
+		if (pkg.status==='DONE') {
+			pkg.completed = new Date().getTime();
+			// Before attaching the thumbnail, save the document...
+			updateRemote(pkg, function(updated_pkg) {
+				// Now that we have the latest _rev
+				server.master_status.hasOwnProperty('rendering') && server.setStatus(0);
+				if (updated_pkg.hasOwnProperty('_id')) {
+					var fp = updated_pkg.render_messages.fileouts[0],
+						thumb = fp.replace(/\.....?$/,'.thumb.jpg'),
+						cmd = 'rvio '+fp+' -outres 250 140 -o '+thumb;
+					popen(cmd, function(e,stdout,stderr) {
+						if (!stderr.match(/not found/) && path.existsSync(thumb)) {
+							keystore.attach(updated_pkg, thumb, function() {
+								console.log('DONE ==> '.green() +
+									JSON.stringify(pkg.render_messages.fileouts,null,3));
+							});
+						} else {
+							console.log("Cannot render thumbnail!".red());
+							console.log(stderr);
+						}
+					});
+				}
+			});
+			return null;
+		}
+
 		updateRemote(pkg,function() {
 			status = pkg.status==='DONE' ? pkg.status.green() : pkg.status.red();
 			console.log(status+': no output files. '+pkg._id);
@@ -1052,44 +1052,11 @@ module.exports = (function Server() {
 			(3) and (4) is === 1;
 		 */
 
-		function render(pkg) {
-			// Be super-paranoid and check this at every step
-			if (server.master_status.ok && isNotRendering()) {
-				pkg.status='RENDERING';
-				pkg.handler = server.machineID;
-				updateRemote(pkg, function(res) {
-					if (res.hasOwnProperty('_id') &&
-						keystore.revDiff(pkg,res)===1) {
-						server.setStatus({ ok:false, rendering:res });
-						var renderPkg = jsonclone(res);
-						//console.log("RENDER ====> "+renderPkg._rev);
-						renderers[renderPkg.type].preRender(renderPkg,serverPostRender);
-					}
-				});
-			}
+		if (server.master_status.ok && isNotRendering()) {
+			var avail = server.available_renderers(); // an [] of ready renderer names
+			keystore.getOpen(avail, grabOne);
 		}
 		
-		function makeReservation(pkg) {
-			 // Be super-paranoid and check this at every step
-			if (server.master_status.ok && isNotRendering()) {
-				pkg.render_messages = {}; // Clean out messages from previous runs
-				updateRemote(pkg, function(res) {
-					if (res.hasOwnProperty('_id') &&
-					keystore.revDiff(pkg,res)===1) {
-						render(res);
-					}
-				});
-			}
-		}
-		
-		function resolveDeppsAndCapture(batches,pkg) {
-			var allDone = {};
-			for_each_in(batches, function(id,batch) {
-				allDone[batch.DONE===batch.TOTAL] = null;
-			});
-			if (!allDone.hasOwnProperty('false')) { makeReservation(pkg); }
-		}
-
 		function canRender(pkg) {
 			return	!timelocks.active() && 							// This is a precautionary double-check
 					renderers.hasOwnProperty(pkg.type) &&			// Is the renderer implemented?
@@ -1117,12 +1084,44 @@ module.exports = (function Server() {
 			}
 		}
 
-		(function getNewRenderMain() {
+		function makeReservation(pkg) {
+			 // Be super-paranoid and check this at every step
 			if (server.master_status.ok && isNotRendering()) {
-				var avail = server.available_renderers(); // an [] of ready renderer names
-				keystore.getOpen(avail, grabOne);
+				pkg.render_messages = {}; // Clean out messages from previous runs
+				updateRemote(pkg, function(res) {
+					if (res.hasOwnProperty('_id') &&
+					keystore.revDiff(pkg,res)===1) {
+						render(res);
+					}
+				});
 			}
-		})();
+		}
+
+		function resolveDeppsAndCapture(batches,pkg) {
+			var allDone = {};
+			for_each_in(batches, function(id,batch) {
+				allDone[batch.DONE===batch.TOTAL] = null;
+			});
+			if (!allDone.hasOwnProperty('false')) { makeReservation(pkg); }
+		}
+
+		function render(pkg) {
+			// Be super-paranoid and check this at every step
+			if (server.master_status.ok && isNotRendering()) {
+				pkg.status='RENDERING';
+				pkg.handler = server.machineID;
+				updateRemote(pkg, function(res) {
+					if (res.hasOwnProperty('_id') &&
+						keystore.revDiff(pkg,res)===1) {
+						server.setStatus({ ok:false, rendering:res });
+						var renderPkg = jsonclone(res);
+						//console.log("RENDER ====> "+renderPkg._rev);
+						renderers[renderPkg.type].preRender(renderPkg,serverPostRender);
+					}
+				});
+			}
+		}
+
 	}
 
 	setInterval(getNewRenders,5*1000);
